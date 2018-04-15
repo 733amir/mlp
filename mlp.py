@@ -3,6 +3,15 @@ import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.datasets import load_iris
 from random import shuffle
+from json import dumps
+
+
+class Constants:
+    DIMENSIONS = 'DIMENSIONS'
+    ACTIVATION_FUNCTIONS = 'ACTIVATION_FUNCTIONS'
+    RANDOM_STATE = 'RANDOM_STATE'
+    WEIGHTS = 'WEIGHTS'
+    BIASES = 'BIASES'
 
 
 class MLP:
@@ -21,7 +30,7 @@ class MLP:
         'hid_layer': 0,
         'hid_neuron': 1,
     }
-    _normal_parameters = [0, 1]
+    _normal_parameters = [0, 0.1]
 
     def __init__(self, input_layer, hidden_layers, hidden_neurons_per_layer, output_layer, random_state=1):
         f"""
@@ -63,7 +72,7 @@ class MLP:
 
         # Used variables during training.
         self._inputs, self._outputs = [], []
-        self._eta, self._errors = 0, []
+        self._errors = []
 
     def _initialize_weights(self, i, hl, hn, o):  # Input, Hidden layers, Hidden neurons, Output sizes.
         """
@@ -131,8 +140,10 @@ class MLP:
 
         return X
 
-    def fit(self, X, y, epoch=10000, eta=1, batch_size=1000, kfold=10):
+    def fit(self, X, y, epoch=10000, eta=0.1, batch_size=1000, kfold=10):
         # TODO implement kfold 10
+
+
         self._errors = []
         for i in range(epoch):
             for j in range(0, X.shape[0], batch_size):
@@ -171,11 +182,34 @@ class MLP:
 
         return mse
 
-    def save_to_file(self):
-        pass
+    def save_to_file(self, path):
+        with open(path, 'w') as storage:
+            storage.write(str(self._get_parameters()))
 
-    def load_from_file(self):
-        pass
+    @classmethod
+    def load_from_file(cls, path):
+        with open(path, 'r') as storage:
+            params = eval(storage.read())
+            return cls._set_parameters(params)
+
+    def _get_parameters(self):
+        return {
+            Constants.DIMENSIONS: self._nn_dimensions,
+            Constants.ACTIVATION_FUNCTIONS: self._nn_activation_funcs.get_names(),
+            Constants.RANDOM_STATE: self._random_state,
+            Constants.WEIGHTS: [w.tolist() for w in self._weights],
+            Constants.BIASES: [b.tolist() for b in self._biases],
+        }
+
+    @classmethod
+    def _set_parameters(cls, params):
+        new_mlp = cls(*params[Constants.DIMENSIONS], random_state=params[Constants.RANDOM_STATE])
+
+        new_mlp._nn_activation_funcs = ActivationFunctions(params[Constants.ACTIVATION_FUNCTIONS])
+        new_mlp._weights = [np.array(w) for w in params[Constants.WEIGHTS]]
+        new_mlp._biases = [np.array(b) for b in params[Constants.BIASES]]
+
+        return new_mlp
 
     # def _activation_func(self, layer, net_input, raw_input=False):  # TODO
     #     """
@@ -238,6 +272,8 @@ def main():
 
     mlp = MLP(4, 1, 3, 3)
     mlp.fit(X[train], y[train])
+    mlp.save_to_file('test')
+    mlp = MLP.load_from_file('test')
     print('Predict:', np.argmax(mlp.predict(X[test]), axis=1))
     print('Target: ', np.argmax(y[test], axis=1))
 

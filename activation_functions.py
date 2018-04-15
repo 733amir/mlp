@@ -40,6 +40,9 @@ class ActivationFunctions:
     def get_derivative(self, key):
         return self._activation_funcs_derivative[self._funcs[key]]
 
+    def get_names(self):
+        return self._funcs
+
     @staticmethod
     def linear(X):
         """
