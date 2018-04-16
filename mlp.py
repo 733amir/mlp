@@ -2,8 +2,8 @@ from activation_functions import ActivationFunctions
 import matplotlib.pyplot as plt
 import numpy as np
 from sklearn.datasets import load_iris
-from random import shuffle
-from json import dumps
+from trainer import Trainer
+from utils import Utils
 
 
 class Constants:
@@ -12,6 +12,9 @@ class Constants:
     RANDOM_STATE = 'RANDOM_STATE'
     WEIGHTS = 'WEIGHTS'
     BIASES = 'BIASES'
+
+    DELTA_ERR = 'DELTA_ERR'
+    EPOCH = 'EPOCH'
 
 
 class MLP:
@@ -56,7 +59,6 @@ class MLP:
 
         self._nn_dimensions = input_layer, hidden_layers, hidden_neurons_per_layer, output_layer
 
-        # TODO get activation functions from user.
         self._nn_activation_funcs = ActivationFunctions.init_linear_sigmoids_softmax(hidden_layers)
 
         # Initializing NumPy random number generator.
@@ -67,8 +69,8 @@ class MLP:
         self._weights = self._initialize_weights(*self._nn_dimensions)
         self._biases = self._initialize_biases(*self._nn_dimensions)
 
-        self._log('Initialized weights: [layer][neuron, weight]', self._weights, verbosity=2)
-        self._log('Initialized biases: [layer][bias]', self._biases, verbosity=2)
+        Utils.log('Initialized weights: [layer][neuron, weight]', self._weights, verbosity=2)
+        Utils.log('Initialized biases: [layer][bias]', self._biases, verbosity=2)
 
         # Used variables during training.
         self._inputs, self._outputs = [], []
@@ -114,7 +116,7 @@ class MLP:
         sizes = [i] + [hn] * hl + [o]
         return [np.zeros(s) for s in sizes]
 
-    def predict(self, X):
+    def predict(self, X, one_hot=True):
         """
         Calculate output using weights, biases and activation functions of the model.
 
@@ -122,7 +124,7 @@ class MLP:
         :return: A NumPy array containing the result of the observation. Number of columns is equal to output (last)
             layer and number of rows is equal to number of observations (rows) in input data.
         """
-        self._log(f'Input for prediction to Network:', [X], verbosity=2)
+        Utils.log(f'Input for prediction to Network:', [X], verbosity=2)
 
         self._inputs, self._outputs = [], []
         for i, (w, b) in enumerate(zip(self._weights, self._biases)):
@@ -131,38 +133,77 @@ class MLP:
             self._outputs.append(X)
 
             # Log each batch of calculations.
-            self._log(f'Layer #{i + 1} weights (column => neuron):', [w], verbosity=3)
-            self._log(f'Layer #{i + 1} bias (column => neuron):', [b], verbosity=3)
-            self._log(f'Layer #{i + 1} net input:', [self._inputs[-1]], verbosity=3)
-            self._log(f'Layer #{i + 1} output ({self._nn_activation_funcs.get_name(i)}):', [X], verbosity=3)
+            Utils.log(f'Layer #{i + 1} weights (column => neuron):', [w], verbosity=3)
+            Utils.log(f'Layer #{i + 1} bias (column => neuron):', [b], verbosity=3)
+            Utils.log(f'Layer #{i + 1} net input:', [self._inputs[-1]], verbosity=3)
+            Utils.log(f'Layer #{i + 1} output ({self._nn_activation_funcs.get_name(i)}):', [X], verbosity=3)
 
-        self._log(f'Output of Network prediction:', [X], verbosity=2)
+        Utils.log(f'Output of Network prediction:', [X], verbosity=2)
 
-        return X
+        if one_hot:
+            result = np.zeros(X.shape)
+            for i, max_index in np.ndenumerate(np.argmax(X, axis=1)):
+                result[i, max_index] = 1
+            return result
+        else:
+            return X
 
-    def fit(self, X, y, epoch=10000, eta=0.1, batch_size=1000, kfold=10):
-        # TODO implement kfold 10
+    def fit(self, X, y, epoch=1000, eta=0.1, batch_size=50, delta_err=0.001, stop_condition=Constants.EPOCH):
+        """
+        Update the model with provided data.
 
-
+        :param X: Input for the network.
+        :param y: Desired output.
+        :param epoch: Number of looping on provided data and updating model.
+        :param eta: Learning rate.
+        :param batch_size: Break provided data to batches of this size.
+        :param delta_err: Delta error between each batch update of model.
+        :param stop_condition: Chossing between Epoch and Delta Error as stop condition.
+        :return: Error that each batch update had.
+        """
         self._errors = []
-        for i in range(epoch):
-            for j in range(0, X.shape[0], batch_size):
-                start, end = j, min(j + batch_size, X.shape[0])
-                batch_X, batch_y = X[start:end], y[start:end]
-                self._errors.append(self._batch_update(batch_X, batch_y, eta))
+
+        if stop_condition == Constants.EPOCH:
+            for i in range(epoch):
+                for j in range(0, X.shape[0], batch_size):
+                    start, end = j, min(j + batch_size, X.shape[0])
+                    batch_X, batch_y = X[start:end], y[start:end]
+                    self._errors.append(self._batch_update(batch_X, batch_y, eta))
+
+        elif stop_condition == Constants.DELTA_ERR:
+            while True:
+                for j in range(0, X.shape[0], batch_size):
+                    start, end = j, min(j + batch_size, X.shape[0])
+                    batch_X, batch_y = X[start:end], y[start:end]
+                    self._errors.append(self._batch_update(batch_X, batch_y, eta))
+
+                    if len(self._errors) >= 2 and self._errors[-2] - self._errors[-1] <= delta_err:
+                        break
+                if len(self._errors) >= 2 and self._errors[-2] - self._errors[-1] <= delta_err:
+                    break
+
+        return self._errors
 
     def _batch_update(self, X, y, eta):
-        self.predict(X)
+        """
+        Update the model with batch update.
+
+        :param X: Input for the network.
+        :param y: Desired output.
+        :param eta: Learning rate.
+        :return: Error of the network.
+        """
+        self.predict(X, one_hot=False)
         self._delta = self._initialize_delta(*self._nn_dimensions)
 
         dmse = y - self._outputs[-1]
         mse = (dmse ** 2 / 2).sum()
-        self._log('Mean Squared Error:', [mse], verbosity=1)
+        Utils.log('Mean Squared Error:', [mse], verbosity=1)
 
-        self._log('Weights', [w.shape for w in self._weights], verbosity=4)
-        self._log('Delta', [d.shape for d in self._delta], verbosity=4)
-        self._log('Output', [o.shape for o in self._outputs], verbosity=4)
-        self._log('d MSE', [dmse.shape], verbosity=4)
+        Utils.log('Weights', [w.shape for w in self._weights], verbosity=4)
+        Utils.log('Delta', [d.shape for d in self._delta], verbosity=4)
+        Utils.log('Output', [o.shape for o in self._outputs], verbosity=4)
+        Utils.log('d MSE', [dmse.shape], verbosity=4)
 
         self._delta[-1] = dmse * (self._outputs[-1] * (1 - self._outputs[-1]))  # TODO Generalize
 
@@ -170,29 +211,45 @@ class MLP:
             self._delta[i] = self._delta[i + 1].dot(self._weights[i + 1].T) * \
                              (self._outputs[i] * (1 - self._outputs[i]))  # TODO Generalize
 
-        self._log('Delta matrix:', self._delta, verbosity=2)
+        Utils.log('Delta matrix:', self._delta, verbosity=2)
 
         # Updating Parameters
         for i in range(-1, -len(self._delta), -1):
             self._weights[i] += (eta / self._delta[i].shape[0]) * self._outputs[i - 1].T.dot(self._delta[i])
             self._biases[i] += (eta / self._delta[i].shape[0]) * self._delta[i].sum(axis=0)
 
-        self._log('Weights after update:', self._weights, verbosity=3)
-        self._log('Biases after update:', self._biases, verbosity=3)
+        Utils.log('Weights after update:', self._weights, verbosity=3)
+        Utils.log('Biases after update:', self._biases, verbosity=3)
 
         return mse
 
     def save_to_file(self, path):
+        """
+        Write a file containing parameters of the model.
+
+        :param path: A path to a file.
+        """
         with open(path, 'w') as storage:
             storage.write(str(self._get_parameters()))
 
     @classmethod
     def load_from_file(cls, path):
+        """
+        Read a file containing parameters of a model and load them.
+
+        :param path: A path to a file containing parameters of a model.
+        :return: Generated model.
+        """
         with open(path, 'r') as storage:
             params = eval(storage.read())
             return cls._set_parameters(params)
 
     def _get_parameters(self):
+        """
+        Save all parameters of the model to a dictionary.
+
+        :return: Dictionary containing parameters of the model.
+        """
         return {
             Constants.DIMENSIONS: self._nn_dimensions,
             Constants.ACTIVATION_FUNCTIONS: self._nn_activation_funcs.get_names(),
@@ -203,6 +260,12 @@ class MLP:
 
     @classmethod
     def _set_parameters(cls, params):
+        """
+        Get a dictionary containing parameters of a model and generate the model.
+
+        :param params: Dictionary containing parameters of the model.
+        :return: Generated model using dictionary containing parameters of the model.
+        """
         new_mlp = cls(*params[Constants.DIMENSIONS], random_state=params[Constants.RANDOM_STATE])
 
         new_mlp._nn_activation_funcs = ActivationFunctions(params[Constants.ACTIVATION_FUNCTIONS])
@@ -211,40 +274,13 @@ class MLP:
 
         return new_mlp
 
-    # def _activation_func(self, layer, net_input, raw_input=False):  # TODO
-    #     """
-    #     Activation function for each of out layers. Layers start at 0 for input layer, 1 for first hidden layer, ... .
-    #
-    #     :param layer: Number of the layer.
-    #     :param net_input: Network input of the layer.
-    #     :return: A tuple containing (Applied activation function on net input, Activation function name).
-    #     """
-    #
-    #     if raw_input:
-    #         result, activation_func_name = net_input, 'No'
-    #
-    #     # With Sigmoid for hidden layer(s) and Softmax for output layer.
-    #     elif layer == self._get_number_of_layers() - 1:  # If we are at last (output) layer.
-    #         result, activation_func_name = self._softmax(net_input), 'Softmax'
-    #     else:
-    #         result, activation_func_name = self._sigmoid(net_input), 'Sigmoid'
-    #
-    #     return result, activation_func_name
+    def _normal_random(self, size):
+        """
+        Generating a NumPy ndarray in shape of `size` and filling it with random numbers from a normal distribution.
 
-    # def _get_number_of_layers(self):  # TODO
-    #     """
-    #     Number of layers including an input and output layer and 0 or more hidden layers.
-    #
-    #     :return: Number of all layers including input, hidden(s) and outputs.
-    #     """
-    #
-    #     return 1 + self._nn_dimens[1][0] + 1
-
-    def _log(self, title, data, verbosity=1):  # TODO
-        if self._debug and self._verbosity >= verbosity:
-            print(title, *data, sep='\n', end='\n\n')
-
-    def _normal_random(self, size):  # TODO
+        :param size: Shape of the NumPy ndarray.
+        :return: NumPy ndarray containing random number from normal distribution.
+        """
         mean, var = self._normal_parameters
         return self._random_generator.normal(loc=mean, scale=var, size=size)
 
@@ -259,30 +295,34 @@ def main():
     iris = load_iris()
     X, y = iris['data'], iris['target']
 
-    # Converting target to one-hot target.
-    mapper = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
-    y = np.array([mapper[t] for t in y])
+    t = Trainer(MLP(4, 1, 3, 3), X, y)
+    t.train()
+    print(t.run_test())
 
-    # Split data to train and test.
-    np.random.seed(1)
-    data_index = np.arange(150)
-    np.random.shuffle(data_index)
-    train, test = data_index[:120], data_index[120:]
-    print(train, test)
 
-    mlp = MLP(4, 1, 3, 3)
-    mlp.fit(X[train], y[train])
-    mlp.save_to_file('test')
-    mlp = MLP.load_from_file('test')
-    print('Predict:', np.argmax(mlp.predict(X[test]), axis=1))
-    print('Target: ', np.argmax(y[test], axis=1))
+    # # Converting target to one-hot target.
+    # mapper = [[1, 0, 0], [0, 1, 0], [0, 0, 1]]
+    # y = np.array([mapper[t] for t in y])
+    #
+    # # Split data to train and test.
+    # np.random.seed(1)
+    # data_index = np.arange(150)
+    # np.random.shuffle(data_index)
+    # train, test = data_index[:120], data_index[120:]
+    # print(train, test)
+    #
+    # mlp = MLP(4, 1, 3, 3)
+    # mlp.fit(X[train], y[train])
+    # mlp.save_to_file('test')
+    # mlp = MLP.load_from_file('test')
+    # print('Predict:', np.argmax(mlp.predict(X[test]), axis=1))
+    # print('Target: ', np.argmax(y[test], axis=1))
 
     # c = [2, 3]
     # plt.scatter(iris['data'][:50, c[0]], iris['data'][:50, c[1]], c='r', marker='.', label='setoia')
     # plt.scatter(iris['data'][50:100, c[0]], iris['data'][50:100, c[1]], c='b', marker='.', label='setoia')
     # plt.scatter(iris['data'][100:150, c[0]], iris['data'][100:150, c[1]], c='g', marker='.', label='setoia')
     # plt.show()
-
 
     # X = np.array([
     #                  [1, 0],
